@@ -1,0 +1,92 @@
+{
+  "name": "qiuth",
+  "version": "0.1.2",
+  "description": "Multi-factor authentication for API keys through IP allowlisting, TOTP-based MFA, and certificate-based authentication",
+  "keywords": [
+    "api-security",
+    "authentication",
+    "mfa",
+    "totp",
+    "certificate-auth",
+    "api-keys",
+    "multi-factor-auth",
+    "security",
+    "ip-allowlist",
+    "service-account"
+  ],
+  "author": "Qiuth Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clay-good/qiuth.git"
+  },
+  "bugs": {
+    "url": "https://github.com/clay-good/qiuth/issues"
+  },
+  "homepage": "https://github.com/clay-good/qiuth#readme",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "qiuth": "./dist/cli/generate.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src tests --ext .ts",
+    "lint:fix": "eslint src tests --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "type-check": "tsc --noEmit",
+    "demo": "tsx demo/server.ts",
+    "prepublishOnly": "npm run type-check && npm run test && npm run build",
+    "clean": "rm -rf dist coverage"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vitest/coverage-v8": "^4.0.4",
+    "eslint": "^8.54.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-prettier": "^5.0.1",
+    "express": "^4.21.2",
+    "prettier": "^3.1.0",
+    "ts-node": "^10.9.2",
+    "tsup": "^8.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.4"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "qiuth": "^0.1.1"
+  }
+}
