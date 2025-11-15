@@ -122,7 +122,13 @@ export class QiuthAuthenticator {
    * Validate API key against stored hash using constant-time comparison
    */
   private validateApiKey(apiKey: string, hashedApiKey: string): boolean {
-    if (!apiKey) {
+    // Fast-fail on empty or invalid inputs
+    if (!apiKey || !hashedApiKey || typeof apiKey !== 'string' || apiKey.length < 1) {
+      return false;
+    }
+
+    // Validate hashed key format (should be 64 hex characters for SHA-256)
+    if (hashedApiKey.length !== 64 || !/^[0-9a-f]{64}$/i.test(hashedApiKey)) {
       return false;
     }
 

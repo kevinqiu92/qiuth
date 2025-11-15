@@ -17,9 +17,10 @@ import { createHmac } from 'node:crypto';
  * This allows programmatic MFA for service accounts.
  */
 export class TotpValidator {
-  private readonly config: TotpConfig;
   private readonly timeStep: number;
   private readonly window: number;
+  private readonly decodedSecret: Buffer;
+  private readonly timeStepMs: number;
 
   /**
    * Create a new TOTP validator
@@ -33,7 +34,6 @@ export class TotpValidator {
       throw new Error('TOTP secret is required when TOTP is enabled');
     }
 
-    this.config = config;
     this.timeStep = config.timeStep ?? 30;
     this.window = config.window ?? 1;
 
@@ -46,6 +46,18 @@ export class TotpValidator {
     if (this.window < 0) {
       throw new Error('TOTP window cannot be negative');
     }
+
+    // Pre-decode and cache the secret for better performance
+    try {
+      this.decodedSecret = this.base32Decode(config.secret);
+    } catch (error) {
+      throw new Error(
+        `Invalid TOTP secret: ${error instanceof Error ? error.message : 'Invalid base32 encoding'}`
+      );
+    }
+
+    // Pre-calculate time step in milliseconds
+    this.timeStepMs = this.timeStep * 1000;
   }
 
   /**
@@ -59,22 +71,34 @@ export class TotpValidator {
    * @returns true if token is valid, false otherwise
    */
   public validate(token: string, timestamp?: number): boolean {
-    if (!token) {
+    // Fast-fail on empty or invalid input
+    if (!token || token.length > 10) {
       return false;
     }
 
     // Normalize token (remove spaces, ensure 6 digits)
     const normalizedToken = token.replace(/\s/g, '');
-    if (!/^\d{6}$/.test(normalizedToken)) {
+
+    // Strict validation: exactly 6 digits
+    if (normalizedToken.length !== 6) {
       return false;
     }
 
+    // Check all characters are digits (faster than regex for this case)
+    for (let i = 0; i < 6; i++) {
+      const char = normalizedToken.charCodeAt(i);
+      if (char < 48 || char > 57) {
+        // Not a digit (0-9)
+        return false;
+      }
+    }
+
     const time = timestamp ?? Date.now();
-    const counter = Math.floor(time / 1000 / this.timeStep);
+    const counter = Math.floor(time / this.timeStepMs);
 
     // Check current window and adjacent windows
     for (let i = -this.window; i <= this.window; i++) {
-      const expectedToken = this.generateToken(counter + i);
+      const expectedToken = this.generateTokenCached(counter + i);
       if (expectedToken === normalizedToken) {
         return true;
       }
@@ -98,17 +122,14 @@ export class TotpValidator {
   }
 
   /**
-   * Generate a TOTP token for a specific counter value
+   * Generate a TOTP token for a specific counter value (using cached secret)
    *
    * Implements the HOTP algorithm (RFC 4226) with time-based counter.
    *
    * @param counter - Time counter value
    * @returns 6-digit TOTP token
    */
-  private generateToken(counter: number): string {
-    // Decode base32 secret
-    const secret = this.base32Decode(this.config.secret);
-
+  private generateTokenCached(counter: number): string {
     // Convert counter to 8-byte buffer (big-endian)
     const counterBuffer = Buffer.alloc(8);
     // Write as big-endian 64-bit integer
@@ -118,8 +139,8 @@ export class TotpValidator {
       c = Math.floor(c / 256);
     }
 
-    // Generate HMAC-SHA1
-    const hmac = createHmac('sha1', secret);
+    // Generate HMAC-SHA1 using cached decoded secret
+    const hmac = createHmac('sha1', this.decodedSecret);
     hmac.update(counterBuffer);
     const hash = hmac.digest();
 
@@ -134,6 +155,19 @@ export class TotpValidator {
     // Generate 6-digit token
     const token = binary % 1000000;
     return token.toString().padStart(6, '0');
+  }
+
+  /**
+   * Generate a TOTP token for a specific counter value
+   *
+   * Implements the HOTP algorithm (RFC 4226) with time-based counter.
+   *
+   * @param counter - Time counter value
+   * @returns 6-digit TOTP token
+   * @deprecated Use generateTokenCached for better performance
+   */
+  private generateToken(counter: number): string {
+    return this.generateTokenCached(counter);
   }
 
   /**

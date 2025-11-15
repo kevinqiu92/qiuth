@@ -17,8 +17,9 @@ import { createSign, createVerify, createHash } from 'node:crypto';
  * Prevents replay attacks through timestamp validation.
  */
 export class CertificateValidator {
-  private readonly config: CertificateConfig;
   private readonly maxAge: number;
+  private readonly maxAgeMs: number;
+  private readonly publicKeyBuffer: Buffer;
 
   /**
    * Create a new certificate validator
@@ -32,12 +33,15 @@ export class CertificateValidator {
       throw new Error('Public key is required when certificate authentication is enabled');
     }
 
-    this.config = config;
     this.maxAge = config.maxAge ?? 300; // Default 5 minutes
+    this.maxAgeMs = this.maxAge * 1000; // Pre-calculate for performance
 
     if (this.maxAge <= 0) {
       throw new Error('Certificate maxAge must be positive');
     }
+
+    // Pre-convert public key to buffer for faster verification
+    this.publicKeyBuffer = Buffer.from(config.publicKey);
   }
 
   /**
@@ -62,17 +66,22 @@ export class CertificateValidator {
     body?: string | Buffer,
     timestamp?: string | number
   ): boolean {
-    if (!signature) {
+    // Fast-fail on empty inputs
+    if (!signature || !timestamp || !method || !url) {
       return false;
     }
 
-    if (!timestamp) {
-      return false;
-    }
-
-    // Validate timestamp
+    // Validate timestamp first (cheapest check)
     const timestampMs = this.parseTimestamp(timestamp);
     if (!this.isTimestampValid(timestampMs)) {
+      return false;
+    }
+
+    // Decode signature early to catch invalid base64
+    let signatureBuffer: Buffer;
+    try {
+      signatureBuffer = Buffer.from(signature, 'base64');
+    } catch {
       return false;
     }
 
@@ -85,9 +94,8 @@ export class CertificateValidator {
       verifier.update(canonical);
       verifier.end();
 
-      const signatureBuffer = Buffer.from(signature, 'base64');
-      return verifier.verify(this.config.publicKey, signatureBuffer);
-    } catch (error) {
+      return verifier.verify(this.publicKeyBuffer, signatureBuffer);
+    } catch {
       // Invalid signature format or verification error
       return false;
     }
@@ -174,15 +182,15 @@ export class CertificateValidator {
    * @returns true if timestamp is valid
    */
   private isTimestampValid(timestampMs: number): boolean {
-    if (isNaN(timestampMs)) {
+    if (isNaN(timestampMs) || timestampMs <= 0) {
       return false;
     }
 
     const now = Date.now();
     const age = now - timestampMs;
 
-    // Reject if too old
-    if (age > this.maxAge * 1000) {
+    // Reject if too old (using pre-calculated maxAgeMs)
+    if (age > this.maxAgeMs) {
       return false;
     }
 
