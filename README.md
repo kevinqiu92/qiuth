@@ -4,6 +4,8 @@
 
 > **Qiuth** transforms API keys from bearer tokens into proof-of-possession tokens, requiring multiple authentication factors to prevent unauthorized access even if your API key is leaked.
 
+Pronounced **chew-auth**. Inspired by [Kevin Qiu](https://www.linkedin.com/in/kevinmqiu)
+
 ---
 
 ## 🚨 The Problem
