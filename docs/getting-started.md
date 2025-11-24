@@ -1,6 +1,6 @@
 # Getting Started with Qiuth
 
-Qiuth (pronounced "cue-ith") is a TypeScript SDK that transforms API keys from simple bearer tokens into multi-factor authenticated credentials. This guide will help you get started quickly.
+Qiuth (pronounced "chew-auth") is a TypeScript SDK that transforms API keys from simple bearer tokens into multi-factor authenticated credentials. This guide will help you get started quickly.
 
 ## Installation
 
@@ -86,25 +86,25 @@ const result = await authenticator.authenticate({
 }, config);
 ```
 
-### 4. Add Certificate-based Authentication
+### 4. Add Certificate-based Authentication (Recommended for Maximum Security)
 
-Require cryptographic proof of private key possession:
+**Use `.withCertificate()` for the highest level of security.** This requires cryptographic proof of private key possession, preventing unauthorized access even if API keys and TOTP secrets are compromised.
 
 ```typescript
-import { generateKeyPair } from 'qiuth';
+import { generateKeyPair, CertificateValidator } from 'qiuth';
 
-// Generate key pair (do this once)
+// Generate key pair (do this once, store private key securely)
 const { publicKey, privateKey } = generateKeyPair({ modulusLength: 2048 });
 
-// Server configuration
+// Server configuration - store publicKey in your config
 const config = new QiuthConfigBuilder()
   .withApiKey('your-api-key-here')
+  .withIpAllowlist(['192.168.1.0/24'])
+  .withTotp(totpSecret)
   .withCertificate(publicKey, 300) // maxAge=300 seconds
   .build();
 
-// Client signs requests
-import { CertificateValidator } from 'qiuth';
-
+// Client must sign each request
 const timestamp = Date.now();
 const signature = CertificateValidator.sign(
   privateKey,
@@ -118,12 +118,19 @@ const signature = CertificateValidator.sign(
 const result = await authenticator.authenticate({
   apiKey: 'user-provided-api-key',
   clientIp: '192.168.1.100',
+  totpToken: '123456',
   method: 'GET',
   url: 'https://api.example.com/resource',
   timestamp: timestamp.toString(),
   signature,
 }, config);
 ```
+
+**Key Benefits:**
+- Prevents replay attacks with timestamp validation
+- Even if API key and TOTP are leaked, attacker needs the private key
+- Private key never leaves the client's secure environment
+- Cryptographically verifiable proof-of-possession
 
 ## Express Middleware
 
@@ -284,9 +291,270 @@ const summary = metrics.getSummary();
 console.log(`Success rate: ${summary.successRate * 100}%`);
 ```
 
-## Support
+## Integration Examples
 
-- **GitHub Issues**: https://github.com/clay-good/qiuth/issues
-- **Documentation**: https://github.com/clay-good/qiuth/tree/main/docs
-- **Examples**: https://github.com/clay-good/qiuth/tree/main/examples
+### OAuth2 Flow Integration
 
+Wrap tokens returned by external identity providers (like Google, GitHub, Auth0) with Qiuth for added security:
+
+```typescript
+import express from 'express';
+import { QiuthConfigBuilder, QiuthAuthenticator, generateApiKey, generateTotpSecret } from 'qiuth';
+
+const app = express();
+app.use(express.json());
+
+// OAuth2 callback endpoint
+app.get('/auth/callback', async (req, res) => {
+  const { code } = req.query;
+
+  // Exchange code for token with your OAuth2 provider
+  const oauthToken = await exchangeCodeForToken(code);
+
+  // Generate Qiuth credentials for this user
+  const apiKey = generateApiKey();
+  const totpSecret = generateTotpSecret();
+
+  // Store in your database associated with the OAuth user
+  await db.users.create({
+    oauthId: oauthToken.userId,
+    oauthProvider: 'google',
+    qiuthApiKey: apiKey,
+    qiuthTotpSecret: totpSecret,
+    oauthAccessToken: oauthToken.access_token,
+    oauthRefreshToken: oauthToken.refresh_token,
+  });
+
+  // Return credentials to client
+  res.json({
+    message: 'Authentication successful',
+    credentials: {
+      apiKey,
+      totpSecret,
+      // Client should generate their own key pair for certificate auth
+      setupInstructions: 'Use these credentials with Qiuth for API access',
+    },
+  });
+});
+
+// Protected API endpoint using Qiuth
+const qiuthAuth = createQiuthMiddleware({
+  configLookup: async (apiKey) => {
+    // Look up user by Qiuth API key
+    const user = await db.users.findOne({ qiuthApiKey: apiKey });
+    if (!user) return null;
+
+    // Verify OAuth token is still valid
+    const isValidOAuth = await verifyOAuthToken(user.oauthAccessToken);
+    if (!isValidOAuth) {
+      // Attempt refresh
+      const refreshed = await refreshOAuthToken(user.oauthRefreshToken);
+      if (!refreshed) return null;
+      await db.users.update(user.id, { oauthAccessToken: refreshed.access_token });
+    }
+
+    // Return Qiuth config
+    return new QiuthConfigBuilder()
+      .withApiKey(user.qiuthApiKey)
+      .withTotp(user.qiuthTotpSecret)
+      .build();
+  },
+});
+
+app.get('/api/user/profile', qiuthAuth, async (req, res) => {
+  // Both OAuth2 and Qiuth auth passed
+  const user = await db.users.findOne({ qiuthApiKey: req.qiuth.apiKey });
+  res.json({ profile: user.profile });
+});
+
+async function exchangeCodeForToken(code: string) {
+  // Implement OAuth2 code exchange with your provider
+  const response = await fetch('https://oauth.provider.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code,
+      client_id: process.env.OAUTH_CLIENT_ID,
+      client_secret: process.env.OAUTH_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+    }),
+  });
+  return response.json();
+}
+
+async function verifyOAuthToken(token: string): Promise<boolean> {
+  // Verify token with OAuth provider
+  try {
+    const response = await fetch('https://oauth.provider.com/tokeninfo', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshOAuthToken(refreshToken: string) {
+  // Refresh OAuth token
+  const response = await fetch('https://oauth.provider.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      refresh_token: refreshToken,
+      client_id: process.env.OAUTH_CLIENT_ID,
+      client_secret: process.env.OAUTH_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+    }),
+  });
+  return response.ok ? response.json() : null;
+}
+```
+
+### Express Session Integration
+
+Integrate Qiuth with Express session middleware for web applications:
+
+```typescript
+import express from 'express';
+import session from 'express-session';
+import { QiuthConfigBuilder, generateApiKey, generateTotpSecret, TotpValidator } from 'qiuth';
+
+const app = express();
+app.use(express.json());
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+  },
+}));
+
+// Extend session type
+declare module 'express-session' {
+  interface SessionData {
+    userId: string;
+    qiuthApiKey: string;
+    qiuthTotpSecret: string;
+    authenticated: boolean;
+  }
+}
+
+// Login endpoint - creates session with Qiuth credentials
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  // Verify username/password
+  const user = await db.users.findOne({ username });
+  if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  // Generate or retrieve Qiuth credentials for this user
+  let apiKey = user.qiuthApiKey;
+  let totpSecret = user.qiuthTotpSecret;
+
+  if (!apiKey || !totpSecret) {
+    apiKey = generateApiKey();
+    totpSecret = generateTotpSecret();
+    await db.users.update(user.id, { qiuthApiKey: apiKey, qiuthTotpSecret: totpSecret });
+  }
+
+  // Store in session
+  req.session.userId = user.id;
+  req.session.qiuthApiKey = apiKey;
+  req.session.qiuthTotpSecret = totpSecret;
+  req.session.authenticated = true;
+
+  res.json({
+    message: 'Login successful',
+    credentials: {
+      apiKey,
+      totpSecret,
+    },
+  });
+});
+
+// Middleware to verify session + Qiuth auth for API calls
+const sessionQiuthAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // First check session
+  if (!req.session.authenticated || !req.session.qiuthApiKey) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  // Extract Qiuth credentials from request
+  const apiKey = req.headers['x-api-key'] as string;
+  const totpToken = req.headers['x-totp-token'] as string;
+
+  // Verify API key matches session
+  if (apiKey !== req.session.qiuthApiKey) {
+    return res.status(401).json({ error: 'Invalid API key' });
+  }
+
+  // Build Qiuth config from session
+  const config = new QiuthConfigBuilder()
+    .withApiKey(req.session.qiuthApiKey)
+    .withTotp(req.session.qiuthTotpSecret)
+    .build();
+
+  // Authenticate with Qiuth
+  const authenticator = new QiuthAuthenticator();
+  const result = await authenticator.authenticate({
+    apiKey,
+    clientIp: req.ip || req.socket.remoteAddress || '0.0.0.0',
+    totpToken,
+    method: req.method,
+    url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+  }, config);
+
+  if (!result.success) {
+    return res.status(401).json({
+      error: 'Authentication failed',
+      details: result.errors,
+    });
+  }
+
+  next();
+};
+
+// Protected API routes
+app.get('/api/data', sessionQiuthAuth, async (req, res) => {
+  const user = await db.users.findOne({ id: req.session.userId });
+  res.json({
+    message: 'Access granted',
+    data: user.data,
+  });
+});
+
+app.post('/api/data', sessionQiuthAuth, async (req, res) => {
+  const user = await db.users.findOne({ id: req.session.userId });
+  await db.users.update(user.id, { data: req.body });
+  res.json({ message: 'Data updated' });
+});
+
+// Logout endpoint
+app.post('/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ error: 'Failed to logout' });
+    }
+    res.json({ message: 'Logged out successfully' });
+  });
+});
+
+async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  // Implement password verification (e.g., using bcrypt)
+  const bcrypt = require('bcrypt');
+  return bcrypt.compare(password, hash);
+}
+```
+
+**Session Integration Benefits:**
+- Combines traditional session-based auth with Qiuth MFA
+- Session provides user context, Qiuth provides multi-factor security
+- API keys and TOTP secrets are session-scoped
+- Works seamlessly with existing Express session workflows
