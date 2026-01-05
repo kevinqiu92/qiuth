@@ -19,8 +19,7 @@ import {
   generateKeyPair,
   TotpValidator,
   CertificateValidator
-} from '../src/index';
-
+} from '../src/index';import { IP_ALLOWLIST } from './config';
 const app = express();
 app.use(express.json());
 
@@ -51,21 +50,20 @@ const configs = {
   // Level 2: API Key + IP Allowlist
   withIp: new QiuthConfigBuilder()
     .withApiKey(apiKey)
-    .withIpAllowlist(['127.0.0.1', '::1', '::ffff:127.0.0.1']) // localhost
-    //.withIpAllowlist(['192.168.90.1']) 
+    .withIpAllowlist(IP_ALLOWLIST) // localhost
     .build(),
   
   // Level 3: API Key + IP + TOTP
   withTotp: new QiuthConfigBuilder()
     .withApiKey(apiKey)
-    .withIpAllowlist(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+    .withIpAllowlist(IP_ALLOWLIST)
     .withTotp(totpSecret, 30, 1)
     .build(),
   
   // Level 4: All three layers (Maximum Security)
   full: new QiuthConfigBuilder()
     .withApiKey(apiKey)
-    .withIpAllowlist(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+    .withIpAllowlist(IP_ALLOWLIST)
     .withTotp(totpSecret, 30, 1)
     .withCertificate(publicKey, 300)
     .build(),

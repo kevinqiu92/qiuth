@@ -3,7 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-const watched = path.resolve(__dirname, 'server.ts');
+const watched = path.resolve(__dirname, 'config.ts');
 let child: ChildProcess | null = null;
 let restarting = false;
 let debounceTimer: NodeJS.Timeout | null = null;
